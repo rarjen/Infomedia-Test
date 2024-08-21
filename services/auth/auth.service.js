@@ -112,9 +112,7 @@ const login = async (req) => {
 
 const changePassword = async (req) => {
   const { oldPassword, newPassword } = req.body;
-
-  const user = req.user;
-  const userId = user.id;
+  const userId = req.user.id;
 
   const userExist = await User.findOne({ where: { id: userId } });
 
@@ -122,25 +120,44 @@ const changePassword = async (req) => {
     throw ApiError.badRequest("User tidak ditemukan");
   }
 
-  const match = checkHash(oldPassword, user.password);
+  const match = await checkHash(oldPassword, userExist.password);
 
   if (!match) {
     throw ApiError.badRequest("Password lama salah");
   }
 
-  const passwordHashed = getHash(newPassword);
+  const recentLogs = await Log_changed_password.findAll({
+    where: { user_id: userId },
+    order: [["createdAt", "DESC"]],
+    limit: 5,
+  });
 
-  const result = await User.update(
+  for (const log of recentLogs) {
+    const isSame = await checkHash(newPassword, log.password);
+    if (isSame) {
+      throw ApiError.badRequest(
+        "Password baru tidak boleh sama dengan 5 password terakhir"
+      );
+    }
+  }
+
+  const passwordHashed = await getHash(newPassword);
+
+  const [affectedRows] = await User.update(
     { password: passwordHashed },
     { where: { id: userId } }
   );
+
+  if (affectedRows === 0) {
+    throw ApiError.internalServerError("Gagal mengubah password");
+  }
 
   await Log_changed_password.create({
     user_id: userId,
     password: passwordHashed,
   });
 
-  return result;
+  return { message: "Password berhasil diubah" };
 };
 
 module.exports = {
